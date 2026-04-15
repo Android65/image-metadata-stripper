@@ -1,0 +1,612 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Image Metadata Stripper</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0f1117;
+      --surface: #1a1d27;
+      --border: #2e3248;
+      --accent: #7c6af7;
+      --text: #e2e4f0;
+      --text-muted: #7a7f9a;
+      --red-bg: #2a1a1a;
+      --red-border: #6b2828;
+      --red-text: #f87171;
+      --green-bg: #0f2a1a;
+      --green-border: #1c6b3a;
+      --green-text: #4ade80;
+      --yellow-bg: #2a2210;
+      --yellow-border: #6b5010;
+      --yellow-text: #facc15;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 2rem 1rem 5rem;
+    }
+
+    header { text-align: center; margin-bottom: 2rem; max-width: 560px; }
+    header h1 { font-size: 1.75rem; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 0.5rem; }
+    header p { color: var(--text-muted); font-size: 0.9rem; line-height: 1.6; }
+
+    main { width: 100%; max-width: 680px; }
+
+    /* ── Drop zone ── */
+    #drop-target {
+      border: 2px dashed var(--border);
+      border-radius: 12px;
+      padding: 2.25rem 2rem;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s;
+      background: var(--surface);
+      margin-bottom: 1.5rem;
+    }
+    #drop-target:hover, #drop-target.drag-over { border-color: var(--accent); background: #1e1f35; }
+    #drop-target svg { margin-bottom: 0.75rem; opacity: 0.45; }
+    #drop-target p { color: var(--text-muted); font-size: 0.85rem; margin-top: 0.3rem; }
+    #drop-target strong { color: var(--text); font-size: 0.95rem; }
+
+    .warning-box {
+      margin-top: 0.75rem; padding: 0.65rem 1rem; border-radius: 8px; font-size: 0.85rem;
+      border: 1px solid var(--yellow-border); background: var(--yellow-bg); color: var(--yellow-text);
+    }
+
+    /* ── Queue ── */
+    #queue { display: flex; flex-direction: column; gap: 0.6rem; }
+
+    .q-item {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 0.85rem 1rem;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 0.5rem 1rem;
+      align-items: start;
+      transition: border-color 0.2s;
+    }
+    .q-item.done  { border-color: var(--green-border); }
+    .q-item.error { border-color: var(--red-border); }
+    .q-item.processing { border-color: var(--accent); }
+
+    .q-left { min-width: 0; }
+    .q-right { display: flex; flex-direction: column; align-items: flex-end; gap: 0.4rem; flex-shrink: 0; }
+
+    .q-name {
+      font-size: 0.88rem; font-weight: 500;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+
+    .q-status {
+      font-size: 0.78rem; margin-top: 0.25rem; display: flex; align-items: center; gap: 0.4rem;
+    }
+    .q-status.pending  { color: var(--text-muted); }
+    .q-status.processing { color: var(--accent); }
+    .q-status.done  { color: var(--green-text); }
+    .q-status.error { color: var(--red-text); }
+
+    .q-tags {
+      margin-top: 0.45rem; display: flex; flex-wrap: wrap; gap: 0.25rem;
+    }
+    .q-tag {
+      font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.7rem;
+      padding: 0.15em 0.5em; border-radius: 4px;
+    }
+    .q-tag.removed { background: rgba(248,113,113,0.12); color: var(--red-text); }
+    .q-tag.kept    { background: rgba(74,222,128,0.10); color: var(--green-text); }
+    .q-tag.none    { background: rgba(122,127,154,0.12); color: var(--text-muted); }
+
+    .q-size { font-size: 0.75rem; color: var(--text-muted); margin-top: 0.2rem; }
+
+    /* mini spinner */
+    .mini-spin {
+      width: 12px; height: 12px; border: 2px solid rgba(124,106,247,0.3);
+      border-top-color: var(--accent); border-radius: 50%;
+      animation: spin 0.7s linear infinite; display: inline-block; flex-shrink: 0;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* buttons */
+    button {
+      padding: 0.45rem 1rem; border-radius: 7px; font-size: 0.82rem; font-weight: 500;
+      cursor: pointer; border: none; transition: opacity 0.15s, transform 0.1s; white-space: nowrap;
+    }
+    button:active { transform: scale(0.96); }
+    .btn-dl { background: var(--accent); color: #fff; }
+    .btn-dl:hover { opacity: 0.85; }
+    .btn-clear { background: var(--surface); color: var(--text-muted); border: 1px solid var(--border); }
+    .btn-clear:hover { color: var(--text); border-color: var(--red-border); }
+
+    /* queue footer bar */
+    #queue-footer {
+      display: none;
+      margin-top: 1rem;
+      justify-content: space-between;
+      align-items: center;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+    }
+    #queue-footer.visible { display: flex; }
+    #queue-summary { font-size: 0.82rem; color: var(--text-muted); }
+
+    footer {
+      margin-top: 3rem; text-align: center; color: var(--text-muted);
+      font-size: 0.78rem; max-width: 500px; line-height: 1.7;
+    }
+    footer code {
+      background: var(--surface); padding: 0.1em 0.35em;
+      border-radius: 4px; font-family: 'SF Mono', 'Fira Code', monospace;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>Image Metadata Stripper</h1>
+  <p>Removes Adobe Content Credentials and other Adobe metadata while keeping EXIF, DPI, and ICC profiles. Runs entirely in your browser — nothing is uploaded anywhere.</p>
+</header>
+
+<main>
+  <div id="drop-target" role="button" tabindex="0" aria-label="Upload images">
+    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+      <polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+    </svg>
+    <strong>Click to browse or drag &amp; drop</strong>
+    <p>JPEG &bull; PNG &bull; TIFF &bull; WEBP &mdash; multiple files supported</p>
+  </div>
+  <input type="file" id="file-input" accept=".jpg,.jpeg,.png,.tif,.tiff,.webp,image/jpeg,image/png,image/tiff,image/webp" multiple hidden>
+  <div id="format-warning" class="warning-box" style="display:none">
+    Some files were skipped — only JPEG, PNG, TIFF, and WEBP are supported.
+  </div>
+
+  <div id="queue"></div>
+
+  <div id="queue-footer">
+    <span id="queue-summary"></span>
+    <div style="display:flex;gap:0.5rem">
+      <button class="btn-dl" id="dl-all-btn" style="display:none">Download all</button>
+      <button class="btn-clear" id="clear-btn">Clear</button>
+    </div>
+  </div>
+</main>
+
+<footer>
+  Strips Adobe metadata segments directly from the binary — pixels are never decoded or re-encoded, so there is zero quality loss. JPEG (APP1 XMP, APP13, APP14), PNG (<code>iTXt XML:com.adobe.xmp</code>), WEBP (<code>XMP&nbsp;</code> chunk), TIFF (tags 700 &amp; 34377).
+</footer>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+// Binary parsers  (format-specific, pixel-free)
+// ═══════════════════════════════════════════════════════════════
+
+function startsWith(arr, bytes) {
+  for (let i = 0; i < bytes.length; i++) if (arr[i] !== bytes[i]) return false;
+  return true;
+}
+function startsWithStr(arr, str) {
+  for (let i = 0; i < str.length; i++) if (arr[i] !== str.charCodeAt(i)) return false;
+  return true;
+}
+function concat(arrays) {
+  const total = arrays.reduce((s, a) => s + a.length, 0);
+  const out = new Uint8Array(total);
+  let p = 0;
+  for (const a of arrays) { out.set(a, p); p += a.length; }
+  return out;
+}
+
+// JPEG — strips APP1 XMP, APP13 (Photoshop IRB), APP14 (Adobe color)
+function stripJpeg(buffer) {
+  const src = new Uint8Array(buffer);
+  const removed = [], kept = [], parts = [];
+  if (src[0] !== 0xFF || src[1] !== 0xD8) throw new Error('Not a valid JPEG');
+  parts.push(src.slice(0, 2));
+  let i = 2;
+  while (i < src.length) {
+    if (src[i] !== 0xFF) { parts.push(src.slice(i)); break; }
+    const marker = src[i + 1];
+    if (marker === 0xD9) { parts.push(src.slice(i, i + 2)); break; }
+    if (marker === 0xD8 || (marker >= 0xD0 && marker <= 0xD7) || marker === 0x01) {
+      parts.push(src.slice(i, i + 2)); i += 2; continue;
+    }
+    const segLen = (src[i + 2] << 8) | src[i + 3];
+    const segEnd = i + 2 + segLen;
+    const payload = src.slice(i + 4, segEnd);
+    if (marker === 0xDA) { parts.push(src.slice(i)); break; }
+    let strip = false, label = '';
+    if (marker === 0xED) {
+      strip = true; label = 'APP13 (Photoshop IRB)';
+    } else if (marker === 0xEE) {
+      strip = true; label = 'APP14 (Adobe color)';
+    } else if (marker === 0xE1) {
+      if (startsWith(payload, [0x45,0x78,0x69,0x66,0x00])) {
+        label = 'APP1 (EXIF)';
+      } else if (startsWithStr(payload, 'http://ns.adobe.com/xap/1.0/')) {
+        strip = true; label = 'APP1 (XMP)';
+      } else if (startsWithStr(payload, 'http://ns.adobe.com/xmp/extension/')) {
+        strip = true; label = 'APP1 (Extended XMP)';
+      } else { label = 'APP1'; }
+    } else if (marker === 0xE0) {
+      label = 'APP0 (JFIF)';
+    } else if (marker === 0xE2) {
+      label = startsWithStr(payload, 'ICC_PROFILE') ? 'APP2 (ICC Profile)' : 'APP2';
+    }
+    if (strip) { removed.push(label); } else { if (label) kept.push(label); parts.push(src.slice(i, segEnd)); }
+    i = segEnd;
+  }
+  return { buffer: concat(parts).buffer, removed, kept };
+}
+
+// PNG — strips iTXt chunk with keyword "XML:com.adobe.xmp"
+function stripPng(buffer) {
+  const src = new Uint8Array(buffer);
+  const removed = [], kept = [], parts = [];
+  const PNG_SIG = [0x89,0x50,0x4E,0x47,0x0D,0x0A,0x1A,0x0A];
+  if (!startsWith(src, PNG_SIG)) throw new Error('Not a valid PNG');
+  parts.push(src.slice(0, 8));
+  let i = 8;
+  while (i + 12 <= src.length) {
+    const chunkLen = ((src[i]<<24)|(src[i+1]<<16)|(src[i+2]<<8)|src[i+3]) >>> 0;
+    const type = String.fromCharCode(src[i+4],src[i+5],src[i+6],src[i+7]);
+    const dataOff = i + 8;
+    const chunkEnd = dataOff + chunkLen + 4;
+    const data = src.slice(dataOff, dataOff + chunkLen);
+    let strip = false, label = '';
+    if (type === 'iTXt' || type === 'tEXt' || type === 'zTXt') {
+      let n = 0; while (n < data.length && data[n] !== 0) n++;
+      const keyword = String.fromCharCode(...data.slice(0, n));
+      if (type === 'iTXt' && keyword === 'XML:com.adobe.xmp') {
+        strip = true; label = 'iTXt (XML:com.adobe.xmp)';
+      } else { label = `${type} (${keyword || '?'})`; }
+    } else if (type === 'iCCP') {
+      label = 'iCCP (ICC color profile)';
+    }
+    if (strip) { removed.push(label); } else { if (label) kept.push(label); parts.push(src.slice(i, chunkEnd)); }
+    i = chunkEnd;
+  }
+  return { buffer: concat(parts).buffer, removed, kept };
+}
+
+// WEBP — strips XMP  RIFF chunk
+function stripWebp(buffer) {
+  const src = new Uint8Array(buffer);
+  const view = new DataView(buffer);
+  const removed = [], kept = [], chunks = [];
+  if (!startsWithStr(src, 'RIFF') || !startsWithStr(src.slice(8), 'WEBP'))
+    throw new Error('Not a valid WEBP');
+  let i = 12;
+  while (i + 8 <= src.length) {
+    const fourcc = String.fromCharCode(src[i],src[i+1],src[i+2],src[i+3]);
+    const size = view.getUint32(i + 4, true);
+    const paddedSize = size + (size & 1);
+    const chunkEnd = i + 8 + paddedSize;
+    if (fourcc === 'XMP ') {
+      removed.push('XMP  chunk (XMP metadata)');
+    } else {
+      let label = '';
+      if (fourcc === 'ICCP') label = 'ICCP (ICC color profile)';
+      else if (fourcc === 'EXIF') label = 'EXIF (EXIF data)';
+      if (label) kept.push(label);
+      chunks.push(src.slice(i, chunkEnd));
+    }
+    i = chunkEnd;
+  }
+  const chunksLen = chunks.reduce((s, c) => s + c.length, 0);
+  const out = new Uint8Array(12 + chunksLen);
+  const outView = new DataView(out.buffer);
+  out.set(src.slice(0, 4));
+  outView.setUint32(4, 4 + chunksLen, true);
+  out.set(src.slice(8, 12), 8);
+  let p = 12;
+  for (const c of chunks) { out.set(c, p); p += c.length; }
+  return { buffer: out.buffer, removed, kept };
+}
+
+// TIFF — strips tags 700 (XMP) and 34377 (Photoshop IRB) from tag_v2 IFDs
+function stripTiff(buffer) {
+  const arr = new Uint8Array(buffer.slice(0));
+  const view = new DataView(arr.buffer);
+  const removed = [], kept = [];
+  const byteOrder = view.getUint16(0);
+  if (byteOrder !== 0x4949 && byteOrder !== 0x4D4D) throw new Error('Not a valid TIFF');
+  const le = byteOrder === 0x4949;
+  const get16 = o => view.getUint16(o, le);
+  const get32 = o => view.getUint32(o, le);
+  const set16 = (o, v) => view.setUint16(o, v, le);
+  const set32 = (o, v) => view.setUint32(o, v, le);
+  const STRIP_TAGS = { 700: 'Tag 700 (XMP)', 34377: 'Tag 34377 (Photoshop IRB)' };
+  const KNOWN_TAGS = { 282:'XResolution', 283:'YResolution', 296:'ResolutionUnit',
+    34675:'ICC Profile', 305:'Software', 306:'DateTime', 315:'Artist', 33432:'Copyright' };
+  let ifdOffset = get32(4);
+  while (ifdOffset !== 0 && ifdOffset + 6 <= arr.length) {
+    const count = get16(ifdOffset);
+    const all = [];
+    for (let k = 0; k < count; k++) {
+      const off = ifdOffset + 2 + k * 12;
+      if (off + 12 > arr.length) break;
+      all.push({ tag: get16(off), off });
+    }
+    const nextPtrOff = ifdOffset + 2 + count * 12;
+    const nextIfd = (nextPtrOff + 4 <= arr.length) ? get32(nextPtrOff) : 0;
+    const toKeep   = all.filter(e => !STRIP_TAGS[e.tag]);
+    const toRemove = all.filter(e =>  STRIP_TAGS[e.tag]);
+    for (const e of toRemove) removed.push(STRIP_TAGS[e.tag]);
+    for (const e of toKeep) { const n = KNOWN_TAGS[e.tag]; if (n) kept.push(n); }
+    if (toRemove.length > 0) {
+      set16(ifdOffset, toKeep.length);
+      for (let k = 0; k < toKeep.length; k++) {
+        const src = toKeep[k].off, dst = ifdOffset + 2 + k * 12;
+        if (src !== dst) arr.copyWithin(dst, src, src + 12);
+      }
+      const newNextPtrOff = ifdOffset + 2 + toKeep.length * 12;
+      set32(newNextPtrOff, nextIfd);
+      arr.fill(0, newNextPtrOff + 4, nextPtrOff + 4);
+    }
+    ifdOffset = nextIfd;
+  }
+  return { buffer: arr.buffer, removed, kept };
+}
+
+function detectFormat(src) {
+  if (src[0] === 0xFF && src[1] === 0xD8) return 'JPEG';
+  if (src[0] === 0x89 && src[1] === 0x50 && src[2] === 0x4E && src[3] === 0x47) return 'PNG';
+  if (src[0] === 0x52 && src[1] === 0x49 && src[2] === 0x46 && src[3] === 0x46 &&
+      src[8] === 0x57 && src[9] === 0x45 && src[10] === 0x42 && src[11] === 0x50) return 'WEBP';
+  if ((src[0] === 0x49 && src[1] === 0x49) || (src[0] === 0x4D && src[1] === 0x4D)) return 'TIFF';
+  return null;
+}
+
+const FORMAT_MIME = { JPEG:'image/jpeg', PNG:'image/png', TIFF:'image/tiff', WEBP:'image/webp' };
+const FORMAT_EXT  = { JPEG:'.jpg', PNG:'.png', TIFF:'.tif', WEBP:'.webp' };
+
+// ═══════════════════════════════════════════════════════════════
+// Queue  state
+// ═══════════════════════════════════════════════════════════════
+
+// item: { id, file, status: 'pending'|'processing'|'done'|'error', result, error }
+const queue = [];
+let processing = false;
+let nextId = 0;
+
+const ALLOWED_MIME = new Set(['image/jpeg','image/png','image/tiff','image/webp']);
+const ALLOWED_EXT  = new Set(['.jpg','.jpeg','.png','.tif','.tiff','.webp']);
+
+function isAllowed(file) {
+  if (ALLOWED_MIME.has(file.type)) return true;
+  const dot = file.name.lastIndexOf('.');
+  return dot !== -1 && ALLOWED_EXT.has(file.name.slice(dot).toLowerCase());
+}
+
+function enqueue(files) {
+  let skipped = 0;
+  for (const file of files) {
+    if (!isAllowed(file)) { skipped++; continue; }
+    const item = { id: nextId++, file, status: 'pending', result: null, error: null };
+    queue.push(item);
+    renderItem(item);
+  }
+  document.getElementById('format-warning').style.display = skipped ? '' : 'none';
+  updateFooter();
+  runNext();
+}
+
+function runNext() {
+  if (processing) return;
+  const item = queue.find(i => i.status === 'pending');
+  if (!item) return;
+  processing = true;
+  item.status = 'processing';
+  updateItemStatus(item);
+
+  const reader = new FileReader();
+  reader.onerror = () => {
+    item.status = 'error';
+    item.error = 'Failed to read file';
+    processing = false;
+    updateItemStatus(item);
+    updateFooter();
+    runNext();
+  };
+  reader.onload = e => {
+    // Use setTimeout so the spinner has a chance to render before heavy work
+    setTimeout(() => {
+      try {
+        const buffer = e.target.result;
+        const src = new Uint8Array(buffer);
+        const fmt = detectFormat(src);
+        if (!fmt) throw new Error('Unrecognised format');
+        const stripper = { JPEG:stripJpeg, PNG:stripPng, WEBP:stripWebp, TIFF:stripTiff }[fmt];
+        const { buffer: out, removed, kept } = stripper(buffer);
+
+        const dot  = item.file.name.lastIndexOf('.');
+        const base = dot === -1 ? item.file.name : item.file.name.slice(0, dot);
+        const ext  = dot === -1 ? FORMAT_EXT[fmt] : item.file.name.slice(dot);
+        const dlName = base + '_stripped' + ext;
+
+        item.result = { out, fmt, dlName, removed, kept, origSize: buffer.byteLength };
+        item.status = 'done';
+        processing = false;
+        updateItemStatus(item);
+        updateFooter();
+
+        // Auto-download immediately — we're still inside the FileReader callback
+        // chain so programmatic anchor click is permitted by all major browsers
+        triggerDownload(item.result.out, item.result.dlName, FORMAT_MIME[fmt]);
+
+        runNext();
+      } catch (err) {
+        item.status = 'error';
+        item.error = err.message || 'Processing failed';
+        processing = false;
+        updateItemStatus(item);
+        updateFooter();
+        runNext();
+      }
+    }, 20);
+  };
+  reader.readAsArrayBuffer(item.file);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Download
+// ═══════════════════════════════════════════════════════════════
+
+function triggerDownload(buffer, filename, mime) {
+  const blob = new Blob([buffer], { type: mime });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 30_000);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Render helpers
+// ═══════════════════════════════════════════════════════════════
+
+function renderItem(item) {
+  const el = document.createElement('div');
+  el.className = 'q-item pending';
+  el.id = `item-${item.id}`;
+  el.innerHTML = `
+    <div class="q-left">
+      <div class="q-name">${escHtml(item.file.name)}</div>
+      <div class="q-status pending" id="status-${item.id}">Pending</div>
+      <div class="q-tags" id="tags-${item.id}"></div>
+      <div class="q-size" id="size-${item.id}"></div>
+    </div>
+    <div class="q-right" id="right-${item.id}"></div>`;
+  document.getElementById('queue').appendChild(el);
+}
+
+function updateItemStatus(item) {
+  const el      = document.getElementById(`item-${item.id}`);
+  const statusEl = document.getElementById(`status-${item.id}`);
+  const tagsEl   = document.getElementById(`tags-${item.id}`);
+  const sizeEl   = document.getElementById(`size-${item.id}`);
+  const rightEl  = document.getElementById(`right-${item.id}`);
+  if (!el) return;
+
+  el.className = `q-item ${item.status}`;
+  statusEl.className = `q-status ${item.status}`;
+
+  if (item.status === 'pending') {
+    statusEl.textContent = 'Pending';
+  } else if (item.status === 'processing') {
+    statusEl.innerHTML = '<span class="mini-spin"></span> Processing…';
+  } else if (item.status === 'done') {
+    const r = item.result;
+    const saved = r.origSize - r.out.byteLength;
+    statusEl.textContent = r.removed.length === 0
+      ? 'Done — no Adobe metadata found'
+      : `Done — ${r.removed.length} segment${r.removed.length !== 1 ? 's' : ''} removed`;
+
+    tagsEl.innerHTML = r.removed.map(l => `<span class="q-tag removed">${escHtml(l)}</span>`).join('') +
+      (r.removed.length === 0 ? '<span class="q-tag none">nothing removed</span>' : '');
+
+    sizeEl.textContent = fmtBytes(r.origSize) + ' → ' + fmtBytes(r.out.byteLength) +
+      (saved > 0 ? ` (−${fmtBytes(saved)})` : '');
+
+    const btn = document.createElement('button');
+    btn.className = 'btn-dl';
+    btn.textContent = 'Download';
+    btn.onclick = () => triggerDownload(r.out, r.dlName, FORMAT_MIME[r.fmt]);
+    rightEl.innerHTML = '';
+    rightEl.appendChild(btn);
+  } else if (item.status === 'error') {
+    statusEl.textContent = `Error: ${item.error}`;
+    tagsEl.innerHTML = '';
+    sizeEl.textContent = '';
+    rightEl.innerHTML = '';
+  }
+}
+
+function updateFooter() {
+  const footer = document.getElementById('queue-footer');
+  const summary = document.getElementById('queue-summary');
+  const dlAll = document.getElementById('dl-all-btn');
+
+  if (queue.length === 0) { footer.classList.remove('visible'); return; }
+  footer.classList.add('visible');
+
+  const done    = queue.filter(i => i.status === 'done').length;
+  const pending = queue.filter(i => i.status === 'pending').length;
+  const errors  = queue.filter(i => i.status === 'error').length;
+  const parts   = [];
+  if (done)    parts.push(`${done} done`);
+  if (pending) parts.push(`${pending} pending`);
+  if (errors)  parts.push(`${errors} failed`);
+  summary.textContent = parts.join(' · ');
+
+  dlAll.style.display = done > 1 ? '' : 'none';
+}
+
+// ═══════════════════════════════════════════════════════════════
+// UI wiring
+// ═══════════════════════════════════════════════════════════════
+
+const dropTarget = document.getElementById('drop-target');
+const fileInput  = document.getElementById('file-input');
+
+dropTarget.addEventListener('click', () => fileInput.click());
+dropTarget.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') fileInput.click(); });
+dropTarget.addEventListener('dragover', e => { e.preventDefault(); dropTarget.classList.add('drag-over'); });
+dropTarget.addEventListener('dragleave', () => dropTarget.classList.remove('drag-over'));
+dropTarget.addEventListener('drop', e => {
+  e.preventDefault();
+  dropTarget.classList.remove('drag-over');
+  enqueue(Array.from(e.dataTransfer.files));
+});
+fileInput.addEventListener('change', () => {
+  enqueue(Array.from(fileInput.files));
+  fileInput.value = '';
+});
+
+document.getElementById('clear-btn').addEventListener('click', () => {
+  queue.length = 0;
+  document.getElementById('queue').innerHTML = '';
+  document.getElementById('format-warning').style.display = 'none';
+  updateFooter();
+});
+
+document.getElementById('dl-all-btn').addEventListener('click', () => {
+  const done = queue.filter(i => i.status === 'done');
+  // Stagger downloads to avoid browser popup blocking multiple simultaneous downloads
+  done.forEach((item, idx) => {
+    setTimeout(() => {
+      triggerDownload(item.result.out, item.result.dlName, FORMAT_MIME[item.result.fmt]);
+    }, idx * 300);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// Utils
+// ═══════════════════════════════════════════════════════════════
+
+function fmtBytes(n) {
+  if (n < 1024) return `${n} B`;
+  if (n < 1_048_576) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1_048_576).toFixed(2)} MB`;
+}
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+</script>
+</body>
+</html>
