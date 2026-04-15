@@ -434,7 +434,7 @@ function runNext() {
         const dot  = item.file.name.lastIndexOf('.');
         const base = dot === -1 ? item.file.name : item.file.name.slice(0, dot);
         const ext  = dot === -1 ? FORMAT_EXT[fmt] : item.file.name.slice(dot);
-        const dlName = base + '_stripped' + ext;
+        const dlName = base + '_Final' + ext;
 
         item.result = { out, fmt, dlName, removed, kept, origSize: buffer.byteLength };
         item.status = 'done';
